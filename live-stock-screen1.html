@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Stock Screen</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #131722; overflow: hidden; font-family: system-ui, sans-serif; }
+  .ticker { height: 76px; }
+  .ticker .tradingview-widget-container { height: 100%; }
+  .layout { display: flex; height: calc(100vh - 76px); }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .chart { flex: 1; min-height: 0; overflow: hidden; }
+  .chart .tradingview-widget-container { height: 100%; }
+  .sidebar { width: 380px; flex-shrink: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .replica { flex: 1; min-height: 0; overflow: hidden; cursor: pointer; padding: 0; background: #131722; }
+  .replica .tradingview-widget-container { height: 100%; }
+</style>
+</head>
+<body>
+  <!-- First version: scrolling ticker tape -->
+  <div class="ticker">
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>
+      {
+        "symbols": [
+          { "description": "S&P 500", "proName": "FOREXCOM:SPXUSD" },
+          { "description": "Nasdaq 100", "proName": "FOREXCOM:NSXUSD" },
+          { "description": "Apple", "proName": "NASDAQ:AAPL" },
+          { "description": "Nvidia", "proName": "NASDAQ:NVDA" },
+          { "description": "Microsoft", "proName": "NASDAQ:MSFT" },
+          { "description": "Meta", "proName": "NASDAQ:META" },
+          { "description": "Tesla", "proName": "NASDAQ:TSLA" },
+          { "description": "AMD", "proName": "NASDAQ:AMD" },
+          { "description": "Netflix", "proName": "NASDAQ:NFLX" },
+          { "description": "Bitcoin", "proName": "BITSTAMP:BTCUSD" },
+          { "description": "Ethereum", "proName": "BITSTAMP:ETHUSD" }
+        ],
+        "showSymbolLogo": true,
+        "colorTheme": "dark",
+        "isTransparent": false,
+        "displayMode": "adaptive",
+        "locale": "en"
+      }
+      </script>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="main">
+      <div class="chart" id="chartBox"></div>
+    </div>
+
+    <!-- 5 replicas of the large chart, on the side -->
+    <aside class="sidebar" id="sidebar"></aside>
+  </div>
+
+<script>
+  // The 5 replicas, and the large chart's rotation set — same 5, every 10 minutes.
+  const ROTATION = [
+    { name: "S&P 500", symbol: "FOREXCOM:SPXUSD" },
+    { name: "Bitcoin", symbol: "BITSTAMP:BTCUSD" },
+    { name: "Nvidia", symbol: "NASDAQ:NVDA" },
+    { name: "Apple", symbol: "NASDAQ:AAPL" },
+    { name: "Microsoft", symbol: "NASDAQ:MSFT" }
+  ];
+  const ROTATE_MS = 600000; // 10 minutes
+  let index = 0, timer = null;
+
+  const sidebar = document.getElementById("sidebar");
+  const chartBox = document.getElementById("chartBox");
+
+  // Same advanced-chart widget as the large screen, just sized to fit the sidebar.
+  function loadChartInto(box, symbol, allowChange) {
+    box.innerHTML = "";
+    const container = document.createElement("div");
+    container.className = "tradingview-widget-container";
+    container.style.height = "100%";
+    const widget = document.createElement("div");
+    widget.className = "tradingview-widget-container__widget";
+    widget.style.height = "100%";
+    widget.style.width = "100%";
+    container.appendChild(widget);
+    const script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+    script.async = true;
+    script.textContent = JSON.stringify({
+      autosize: true, symbol: symbol, interval: "D", timezone: "Etc/UTC",
+      theme: "dark", style: "1", locale: "en",
+      allow_symbol_change: allowChange, support_host: "https://www.tradingview.com"
+    });
+    container.appendChild(script);
+    box.appendChild(container);
+  }
+
+  // Build the 5 replicas once — they stay put, they do not reload on rotation.
+  const replicas = ROTATION.map((item, i) => {
+    const el = document.createElement("div");
+    el.className = "replica";
+    el.title = item.name;
+    el.addEventListener("click", () => show(i));
+    sidebar.appendChild(el);
+    loadChartInto(el, item.symbol, false);
+    return el;
+  });
+
+  function show(i) {
+    index = (i + ROTATION.length) % ROTATION.length;
+    loadChartInto(chartBox, ROTATION[index].symbol, true);
+    clearTimeout(timer);
+    timer = setTimeout(() => show(index + 1), ROTATE_MS);
+  }
+
+  show(0);
+</script>
+</body>
+</html>
