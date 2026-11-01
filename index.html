@@ -13,8 +13,9 @@
   .chart { flex: 1; min-height: 0; overflow: hidden; }
   .chart .tradingview-widget-container { height: 100%; }
   .sidebar { width: 380px; flex-shrink: 0; overflow: hidden; display: flex; flex-direction: column; }
-  .replica { flex: 1; min-height: 0; overflow: hidden; cursor: pointer; padding: 0; background: #131722; }
-  .replica .tradingview-widget-container { height: 100%; }
+  .replica { flex: 1; min-height: 0; overflow: hidden; cursor: pointer; padding: 0; background: #131722; display: flex; flex-direction: column; }
+  .replica-chart { flex: 1; min-height: 0; overflow: hidden; }
+  .replica-chart .tradingview-widget-container { height: 100%; }
 </style>
 </head>
 <body>
@@ -57,22 +58,42 @@
   </div>
 
 <script>
-  // The 5 replicas, and the large chart's rotation set — same 5, every 10 minutes.
-  const ROTATION = [
+  // 6 symbols in total: 1 on the large screen + 5 in the sidebar.
+  // Rotation is an exchange, not a duplicate: every 10 minutes the large
+  // chart swaps places with the next sidebar panel, so the large symbol
+  // is never also shown in the sidebar.
+  const ALL = [
     { name: "S&P 500", symbol: "FOREXCOM:SPXUSD" },
     { name: "Bitcoin", symbol: "BITSTAMP:BTCUSD" },
     { name: "Nvidia", symbol: "NASDAQ:NVDA" },
     { name: "Apple", symbol: "NASDAQ:AAPL" },
-    { name: "Microsoft", symbol: "NASDAQ:MSFT" }
+    { name: "Microsoft", symbol: "NASDAQ:MSFT" },
+    { name: "Alphabet", symbol: "NASDAQ:GOOGL" }
   ];
-  const ROTATE_MS = 600000; // 10 minutes
-  let index = 0, timer = null;
+  let large = ALL[0];
+  let sidebarSymbols = ALL.slice(1);
+  let swapPos = 0;
+  const ROTATE_MS = 600000; // 10 minutes, symbol exchange
+  let symbolTimer = null;
+
+  // Shared settings: one interval controls the large chart AND all
+  // small panels. It rotates 1m -> 1h -> 1D every 5 minutes, and every
+  // chart is reloaded with that same interval, so they always match.
+  // TradingView interval codes: "1" = 1 minute, "60" = 1 hour, "D" = 1 day.
+  const INTERVALS = ["1", "60", "D"];
+  let intervalIndex = 0;
+  let currentInterval = INTERVALS[intervalIndex];
+  const INTERVAL_MS = 300000; // 5 minutes
+  let intervalTimer = null;
 
   const sidebar = document.getElementById("sidebar");
   const chartBox = document.getElementById("chartBox");
 
-  // Same advanced-chart widget as the large screen, just sized to fit the sidebar.
-  function loadChartInto(box, symbol, allowChange) {
+  // Shared base settings for every chart, large and small:
+  // interval = currentInterval (rotates 1m / 1h / 1D), theme dark,
+  // style 1 (candles), timezone Etc/UTC, locale en.
+  function loadChartInto(box, symbol, opts) {
+    opts = Object.assign({}, opts || {});
     box.innerHTML = "";
     const container = document.createElement("div");
     container.className = "tradingview-widget-container";
@@ -86,34 +107,86 @@
     script.type = "text/javascript";
     script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
     script.async = true;
-    script.textContent = JSON.stringify({
-      autosize: true, symbol: symbol, interval: "D", timezone: "Etc/UTC",
+    script.textContent = JSON.stringify(Object.assign({
+      autosize: true, symbol: symbol, interval: currentInterval, timezone: "Etc/UTC",
       theme: "dark", style: "1", locale: "en",
-      allow_symbol_change: allowChange, support_host: "https://www.tradingview.com"
-    });
+      support_host: "https://www.tradingview.com"
+    }, opts));
     container.appendChild(script);
     box.appendChild(container);
   }
 
-  // Build the 5 replicas once — they stay put, they do not reload on rotation.
-  const replicas = ROTATION.map((item, i) => {
+  // Small panels: they share the large chart's base settings (interval,
+  // theme, style, timezone) — only their display-only settings differ.
+  // No controls, no volume, no date-range bar. The name banner is the
+  // internal TradingView legend, like on the large screen: it overlays
+  // the chart, so it takes no extra space outside it. Its size cannot
+  // be changed inside the embed iframe, so it stays at default size.
+  // Dates and logo are kept as TradingView renders them — covering
+  // them left a blank bar, so no covers/crops are used here.
+  const replicaOpts = {
+    allow_symbol_change: false,
+    hide_top_toolbar: true,
+    hide_side_toolbar: true,
+    hide_legend: false,
+    hide_volume: true,
+    withdateranges: false,
+    details: false,
+    hotlist: false,
+    calendar: false,
+    save_image: false
+  };
+
+  // Build the 5 sidebar panels once; only a panel that swaps changes.
+  const panels = sidebarSymbols.map((item, i) => {
     const el = document.createElement("div");
     el.className = "replica";
     el.title = item.name;
-    el.addEventListener("click", () => show(i));
+    el.addEventListener("click", () => swap(i));
+    const chartEl = document.createElement("div");
+    chartEl.className = "replica-chart";
+    el.appendChild(chartEl);
     sidebar.appendChild(el);
-    loadChartInto(el, item.symbol, false);
-    return el;
+    loadChartInto(chartEl, item.symbol, replicaOpts);
+    return { el: el, chartEl: chartEl };
   });
 
-  function show(i) {
-    index = (i + ROTATION.length) % ROTATION.length;
-    loadChartInto(chartBox, ROTATION[index].symbol, true);
-    clearTimeout(timer);
-    timer = setTimeout(() => show(index + 1), ROTATE_MS);
+  function renderLarge() {
+    loadChartInto(chartBox, large.symbol, { allow_symbol_change: true });
   }
 
-  show(0);
+  function renderAllSmall() {
+    panels.forEach((p, i) => {
+      loadChartInto(p.chartEl, sidebarSymbols[i].symbol, replicaOpts);
+    });
+  }
+
+  function swap(i) {
+    const oldLarge = large;
+    large = sidebarSymbols[i];
+    sidebarSymbols[i] = oldLarge;
+    panels[i].el.title = sidebarSymbols[i].name;
+    loadChartInto(panels[i].chartEl, sidebarSymbols[i].symbol, replicaOpts);
+    renderLarge();
+    swapPos = (i + 1) % sidebarSymbols.length;
+    // Symbol timer only — the interval timer runs independently.
+    clearTimeout(symbolTimer);
+    symbolTimer = setTimeout(() => swap(swapPos), ROTATE_MS);
+  }
+
+  function rotateInterval() {
+    intervalIndex = (intervalIndex + 1) % INTERVALS.length;
+    currentInterval = INTERVALS[intervalIndex];
+    // Same new interval on the large chart and on every small panel.
+    renderLarge();
+    renderAllSmall();
+    clearTimeout(intervalTimer);
+    intervalTimer = setTimeout(rotateInterval, INTERVAL_MS);
+  }
+
+  renderLarge();
+  symbolTimer = setTimeout(() => swap(swapPos), ROTATE_MS);
+  intervalTimer = setTimeout(rotateInterval, INTERVAL_MS);
 </script>
 </body>
 </html>
